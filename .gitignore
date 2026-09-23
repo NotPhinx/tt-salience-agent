@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.py[cod]
+*.log
+status.json
+world.json
+.vscode/
+tools/

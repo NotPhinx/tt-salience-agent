@@ -1,14 +1,15 @@
-# Tandem Tales Random Agent (Python)
+# Tandem Tales Salience Agent (Python)
 
-This repository provides a simple example of how to create a
-[Tandem Tales](https:sgware.github.io/tt) agent in Python that makes random
-decisions according to this policy:
+This repository provides a [Tandem Tales](https://sgware.github.io/tt) agent in
+Python that chooses actions using recency-based salience:
 
-- If this is a normal turn, the agent chooses to `PASS` control to its partner
-  30% of the time. If not passing, it chooses a non-`PASS` action uniformly at
-  random.
-- If this is a `SUCCEED`/`FAIL` decision, the agent chooses `SUCCEED` 80% of the
-  time.
+- Action parameters start at zero salience.
+- Parameters seen during a turn are refreshed to `1.0`; unseen parameters decay
+	by `0.5` per turn.
+- The tracked parameters are `player`, `gamemaster`, `barista`, `coffee`,
+	`herbal tea`, `shop`, `outside`, and `money`.
+- The agent chooses the action with the highest combined parameter salience.
+- Ties prefer actions involving the player, then resolve randomly.
 
 This repository exists to be forked by anyone developing their own Python agent.
 
@@ -39,8 +40,9 @@ image.
 To download and run this agent alongside a local instance of the Tandem Tales
 web server, open a console and type:
 ```
-git clone https://github.com/sgware/tt-random-agent-python.git
-cd tt-random-agent-python
+git clone https://github.com/<your-github-username>/tt-salience-agent.git
+cd tt-salience-agent
+copy .env.example .env
 docker compose build
 docker compose up
 ```
@@ -56,14 +58,14 @@ The first thing you should do to customize this agent is to change its name.
 Find the agent constructor in [`main.py`](root/app/main.py):
 ```
 def __init__(self, url='localhost', port=tt.DEFAULT_PORT):
-    super().__init__('random', None, None, None, None, None, url, port)
+	super().__init__('salience', None, None, None, None, None, url, port)
 ```
-Change the string `'random'` to your agent's new name.
+Change the string `'salience'` to your agent's new name.
 
 You also need to set this new name name in the environment variable file
 [`.env`](.env). Change the line that looks like this:
 ```
-name="random"
+name="salience"
 ```
 You should also change the `title` and `description` variables to something that
 better fit your new agent.
