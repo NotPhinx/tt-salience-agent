@@ -34,9 +34,16 @@ services:
     tty: true
   # Tandem Tales server configuration
   server:
-    image: tt-web
+    image: tt-web-custom
+    build:
+      context: C:/Users/Ethan/tt-web
     # Configure the server's environment variables.
     environment:
+      # Register the custom world mounted from the local tt-server checkout.
+      - world_file=/opt/tt/worlds/crown.json
+      - world_name=crown
+      - world_title=Crowned
+      - world_description=A story about an adventurer, an alchemist, and a crown.
       # Add an agent with these values to the database.
       - agent_name=${name}
       - agent_password=${password-}
@@ -50,6 +57,8 @@ services:
     volumes:
       # This shared volume contains the server's public key so the agent can use it.
       - certs:/etc/tt/certs
+      # Use worlds from the local tt-server checkout.
+      - C:/Users/Ethan/tt-server/worlds:/opt/tt/worlds:ro
     # Allow the container to accept incoming network connections on these ports.
     ports:
       - "80:80"     # HTTP

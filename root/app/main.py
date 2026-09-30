@@ -13,7 +13,7 @@ class SalienceAgent(tt.Client):
 
         Each action parameter starts at zero. Parameters seen during a turn are
         refreshed to 1.0, while parameters not seen lose 0.5 salience per turn.
-        The salience of an action is the sum of its parameter saliences.
+        The salience of an action is the average of its parameter saliences.
 
     Arguments:
         url (str): The URL of the Tandem Tales server.
@@ -22,18 +22,6 @@ class SalienceAgent(tt.Client):
 
     # ID number that will be assigned to the next agent created.
     next_id = 0
-
-    # These are the only story concepts that can contribute to salience.
-    PARAMETERS = (
-        'player',
-        'gamemaster',
-        'barista',
-        'coffee',
-        'herbal tea',
-        'shop',
-        'outside',
-        'money',
-    )
 
     def __init__(self, url='localhost', port=tt.DEFAULT_PORT):
         # The arguments to `tt.Client` are:
@@ -57,7 +45,9 @@ class SalienceAgent(tt.Client):
         super().__init__('salience', None, None, None, None, None, url, port)
         self.id = SalienceAgent.next_id
         SalienceAgent.next_id += 1
-        self.salience = {parameter: 0.0 for parameter in self.PARAMETERS}
+        # Parameters are discovered from the current world's signatures.
+        self.salience = {}
+        self._known_parameters = set()
         # Keep a score for each complete action so it can be inspected in logs.
         self.action_salience = {}
         # Used to recognize actions that repeat without changing the world.
@@ -88,23 +78,34 @@ class SalienceAgent(tt.Client):
 
     @classmethod
     def _action_entities(cls, choice):
-        """Extract entities and locations represented by an available action."""
-        # The action description is the readable form supplied by the server.
-        return cls._parameter_entities(choice.get('description', ''))
+        """Extract parameters represented by an available action signature."""
+        action = choice.get('action', choice)
+        return cls._signature_parameters(action.get('signature', {}))
 
     @classmethod
-    def _parameter_entities(cls, value):
-        """Map story text to the fixed set of story parameters."""
+    def _signature_parameters(cls, signature):
+        """Return entity names used as parameters in a signature object."""
+        if not isinstance(signature, dict):
+            return set()
+        parameters = set()
+        for argument in signature.get('arguments', []):
+            if isinstance(argument, dict):
+                if argument.get('type') == 'Entity' and argument.get('name'):
+                    parameters.add(cls._normalize_parameter(argument['name']))
+                parameters.update(cls._signature_parameters(argument))
+        return parameters
+
+    @staticmethod
+    def _normalize_parameter(value):
+        return str(value).lower().replace('_', ' ')
+
+    def _parameter_entities(self, value):
+        """Map story text to parameters discovered from signatures."""
         if not isinstance(value, str):
             return set()
         text = value.lower().replace('_', ' ')
         entities = set()
-        # Normalize wording such as "you" and "game master" to our keys.
-        if 'player' in text or 'you' in text:
-            entities.add('player')
-        if 'game master' in text or 'gamemaster' in text:
-            entities.add('gamemaster')
-        for parameter in cls.PARAMETERS[2:]:
+        for parameter in self._known_parameters:
             if parameter in text:
                 entities.add(parameter)
         return entities
@@ -114,23 +115,22 @@ class SalienceAgent(tt.Client):
         value = value.lower()
         return value in ('player', 'the player') or 'player' in value
 
-    @classmethod
-    def _observed_values(cls, value):
+    def _observed_values(self, value):
         """Extract identifiers and values from the visible-entity mapping."""
         if isinstance(value, str):
-            return list(cls._parameter_entities(value))
+            return list(self._parameter_entities(value))
         if isinstance(value, dict):
             values = []
             for key, item in value.items():
-                values.extend(cls._parameter_entities(key))
-                values.extend(cls._observed_values(item))
+                values.extend(self._parameter_entities(key))
+                values.extend(self._observed_values(item))
             return values
         if isinstance(value, (list, tuple)):
             values = []
             for item in value:
-                values.extend(cls._observed_values(item))
+                values.extend(self._observed_values(item))
             return values
-        return cls._scalar_values(value)
+        return self._scalar_values(value)
 
     def _update_salience(self, choices, status):
         """Decay unseen entities and refresh entities visible this turn."""
@@ -155,9 +155,11 @@ class SalienceAgent(tt.Client):
         )
 
     def _action_score(self, choice):
-        # An action is more salient when it mentions more recently seen items.
+        # Averaging keeps actions with different parameter counts comparable.
         entities = self._action_entities(choice)
-        return sum(self.salience.get(entity, 0.0) for entity in entities)
+        if not entities:
+            return 0.0
+        return sum(self.salience.get(entity, 0.0) for entity in entities) / len(entities)
 
     @staticmethod
     def _action_key(choice):
@@ -187,6 +189,15 @@ class SalienceAgent(tt.Client):
         """
         Optional: Runs when the client starts its session.
         """
+        self._known_parameters = set()
+        for action in world.get('actions', []):
+            self._known_parameters.update(
+                self._signature_parameters(action.get('signature', {}))
+            )
+        self.salience = {
+            parameter: self.salience.get(parameter, 0.0)
+            for parameter in self._known_parameters
+        }
         print(f"{self} has started its session as the {role} in world \"{world['name']}\".")
     
     def on_update(self, status):
