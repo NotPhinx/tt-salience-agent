@@ -6,9 +6,8 @@ Python that chooses actions using recency-based salience:
 - Action parameters start at zero salience.
 - Parameters seen during a turn are refreshed to `1.0`; unseen parameters decay
 	by `0.5` per turn.
-- The tracked parameters are `player`, `gamemaster`, `barista`, `coffee`,
-	`herbal tea`, `shop`, `outside`, and `money`.
-- The agent chooses the action with the highest combined parameter salience.
+- The tracked parameters are determined from the signature object and differ between worlds
+- The agent chooses the action with the highest average combined salience score.
 - Ties prefer actions involving the player, then resolve randomly.
 
 This repository exists to be forked by anyone developing their own Python agent.
