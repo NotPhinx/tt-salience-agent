@@ -54,6 +54,10 @@ class SalienceAgent(tt.Client):
         self.player_names = set()
         self.last_action_key = None
         self.last_action_state = None
+        self.role = None
+        self.gm_turns_since_pass = 0
+        self.next_forced_pass = 0
+        self.stopped = False
 
     def __str__(self):
         return f"Salience Agent {self.id}"
@@ -169,6 +173,48 @@ class SalienceAgent(tt.Client):
             repr(choice.get('parameters', choice.get('arguments', choice.get('args')))),
         )
 
+    @classmethod
+    def _action_identity(cls, choice):
+        """Identify an action independently of succeed/fail outcome."""
+        action = choice.get('action', choice)
+        return (
+            action.get('id'),
+            action.get('code'),
+            action.get('name'),
+            repr(action.get('signature')),
+        )
+
+    @classmethod
+    def _is_pass(cls, choice):
+        return choice.get('type') == 'PASS'
+
+    def _rejected_actions(self, history):
+        """Return actions previously rejected by the player."""
+        return {
+            self._action_identity(turn)
+            for turn in history
+            if turn.get('role') == 'PLAYER' and turn.get('type') == 'FAIL'
+        }
+
+    @staticmethod
+    def _player_just_passed(history):
+        return bool(history) and (
+            history[-1].get('role') == 'PLAYER'
+            and history[-1].get('type') == 'PASS'
+        )
+
+    def _pass_choice_index(self, choices):
+        return next(
+            (index for index, choice in enumerate(choices) if self._is_pass(choice)),
+            None,
+        )
+
+    def _player_action_choices(self, choices):
+        return [
+            choice for choice in choices
+            if not self._is_pass(choice) and self._involves_player(choice)
+        ]
+
     def _involves_player(self, choice):
         entities = self._action_entities(choice)
         description = choice.get('description', '')
@@ -198,6 +244,10 @@ class SalienceAgent(tt.Client):
             parameter: self.salience.get(parameter, 0.0)
             for parameter in self._known_parameters
         }
+        self.role = role
+        self.gm_turns_since_pass = 0
+        self.next_forced_pass = random.randint(0, 3)
+        self.stopped = False
         print(f"{self} has started its session as the {role} in world \"{world['name']}\".")
     
     def on_update(self, status):
@@ -211,8 +261,60 @@ class SalienceAgent(tt.Client):
         """
         Required: Runs each time the world updates and it is the client's turn.
         """
-        choices = status['choices']
-        self._update_salience(choices, status)
+        original_choices = status['choices']
+        self._update_salience(original_choices, status)
+        rejected_actions = self._rejected_actions(status.get('history', []))
+        choices_with_indices = [
+            (index, choice)
+            for index, choice in enumerate(original_choices)
+            if self._action_identity(choice) not in rejected_actions
+        ]
+
+        if self.role == 'PLAYER':
+            choices_with_indices = [
+                (index, choice) for index, choice in choices_with_indices
+                if choice.get('type') != 'FAIL'
+            ]
+        elif self.role == 'GAME_MASTER':
+            choices_with_indices = [
+                (index, choice) for index, choice in choices_with_indices
+                if not (
+                    choice.get('type') == 'FAIL'
+                    and self._involves_player(choice)
+                )
+                ]
+
+        choice_indices = [index for index, choice in choices_with_indices]
+        choices = [choice for index, choice in choices_with_indices]
+        pass_index = self._pass_choice_index(choices)
+        player_just_passed = self._player_just_passed(status.get('history', []))
+        if (
+            self.role == 'GAME_MASTER'
+            and pass_index is not None
+            and not player_just_passed
+        ):
+            self.gm_turns_since_pass += 1
+            scores = [self._action_score(choice) for choice in choices]
+            actionable_scores = [
+                score for choice, score in zip(choices, scores)
+                if not self._is_pass(choice)
+            ]
+            highest_action_score = max(actionable_scores, default=float('-inf'))
+            most_salient_player_action = any(
+                not self._is_pass(choice)
+                and self._involves_player(choice)
+                and score == highest_action_score
+                for choice, score in zip(choices, scores)
+            )
+            if (
+                self.gm_turns_since_pass >= self.next_forced_pass
+                or most_salient_player_action
+            ):
+                self.gm_turns_since_pass = 0
+                self.next_forced_pass = random.randint(0, 3)
+                print(f"{self} passes control to the player.")
+                return choice_indices[pass_index]
+
         state_signature = repr(status.get('state', {}))
         scores = []
         for choice in choices:
@@ -253,9 +355,9 @@ class SalienceAgent(tt.Client):
         self.last_action_state = state_signature
 
         print(f"{self} chooses: \"{choices[choice]['description']}\"")
-        # Wait a random number of seconds to create the illusion of thinking.
-        time.sleep(random.randint(2, 5))
-        return choice
+        # Keep the response prompt while avoiding stale choices after a stop.
+        time.sleep(0.1)
+        return choice_indices[choice]
     
     def on_end(self, ending):
         """
@@ -274,6 +376,7 @@ class SalienceAgent(tt.Client):
         """
         Optional: Runs when the session stops.
         """
+        self.stopped = True
         if message == None:
             print(f"{self} has stopped.")
         else:

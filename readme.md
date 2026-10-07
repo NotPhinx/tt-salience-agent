@@ -9,6 +9,9 @@ Python that chooses actions using recency-based salience:
 - The tracked parameters are determined from the signature object and differ between worlds
 - The agent chooses the action with the highest average combined salience score.
 - Ties prefer actions involving the player, then resolve randomly.
+- Game-master actions involving the player are always selected as successes, never failures.
+- Player-rejected actions are excluded from later choices.
+- The game master passes when the most salient action involves the player or after a random 0-3 game-master actions.
 
 This repository exists to be forked by anyone developing their own Python agent.
 
