@@ -34,9 +34,7 @@ services:
     tty: true
   # Tandem Tales server configuration
   server:
-    image: tt-web-custom
-    build:
-      context: C:/Users/Ethan/tt-web
+    image: tt-web
     # Configure the server's environment variables.
     environment:
       # Register the custom world mounted from the local tt-server checkout.
@@ -55,10 +53,6 @@ services:
       - play_partner=${name-}
     # Volumes are special directories from the host or other containers.
     volumes:
-      # This shared volume contains the server's public key so the agent can use it.
-      - certs:/etc/tt/certs
-      # Use worlds from the local tt-server checkout.
-      - C:/Users/Ethan/tt-server/worlds:/opt/tt/worlds:ro
     # Allow the container to accept incoming network connections on these ports.
     ports:
       - "80:80"     # HTTP
