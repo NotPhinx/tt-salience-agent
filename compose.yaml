@@ -51,14 +51,15 @@ services:
       - play_world=${world-}
       - agent_role=${role-}
       - play_partner=${name-}
-    # Volumes are special directories from the host or other containers.
-    volumes:
     # Allow the container to accept incoming network connections on these ports.
     ports:
-      - "80:80"     # HTTP
-      - "443:443"   # HTTPS
+      - "8080:80"   # HTTP
+      - "443:443"  # HTTPS
       - "9005:9005" # Tandem Tales
       - "9006:9006" # Tandem Tales (WebSockets)
+    # Share the server's generated certificate with the Python agent.
+    volumes:
+      - certs:/etc/tt/certs
     # Detect when the server has started.
     healthcheck:
       test: ["CMD-SHELL", "grep -q \"Server now listening\" /var/log/tt/log.txt && exit 0 || exit 1"]

@@ -58,27 +58,10 @@ class SalienceAgent(tt.Client):
         self.gm_turns_since_pass = 0
         self.next_forced_pass = 0
         self.stopped = False
+        self._processed_history_length = 0
 
     def __str__(self):
         return f"Salience Agent {self.id}"
-
-    @staticmethod
-    def _scalar_values(value):
-        """Return meaningful scalar values from a nested action field."""
-        if isinstance(value, dict):
-            values = []
-            for key, item in value.items():
-                if key not in ('description', 'type', 'name', 'action'):
-                    values.extend(SalienceAgent._scalar_values(item))
-            return values
-        if isinstance(value, (list, tuple)):
-            values = []
-            for item in value:
-                values.extend(SalienceAgent._scalar_values(item))
-            return values
-        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-            return [str(value)]
-        return []
 
     @classmethod
     def _action_entities(cls, choice):
@@ -103,52 +86,25 @@ class SalienceAgent(tt.Client):
     def _normalize_parameter(value):
         return str(value).lower().replace('_', ' ')
 
-    def _parameter_entities(self, value):
-        """Map story text to parameters discovered from signatures."""
-        if not isinstance(value, str):
-            return set()
-        text = value.lower().replace('_', ' ')
-        entities = set()
-        for parameter in self._known_parameters:
-            if parameter in text:
-                entities.add(parameter)
-        return entities
-
     @staticmethod
     def _is_player_value(value):
         value = value.lower()
         return value in ('player', 'the player') or 'player' in value
 
-    def _observed_values(self, value):
-        """Extract identifiers and values from the visible-entity mapping."""
-        if isinstance(value, str):
-            return list(self._parameter_entities(value))
-        if isinstance(value, dict):
-            values = []
-            for key, item in value.items():
-                values.extend(self._parameter_entities(key))
-                values.extend(self._observed_values(item))
-            return values
-        if isinstance(value, (list, tuple)):
-            values = []
-            for item in value:
-                values.extend(self._observed_values(item))
-            return values
-        return self._scalar_values(value)
-
-    def _update_salience(self, choices, status):
-        """Decay unseen entities and refresh entities visible this turn."""
+    def _update_salience(self, status):
+        """Decay parameters and refresh each newly observed turn once."""
         # Every turn ages all parameters, but never below zero.
         for entity in self.salience:
             self.salience[entity] = max(0.0, self.salience[entity] - 0.5)
 
-        # Only the current world, visible descriptions, and the latest event
-        # refresh salience. Available future choices do not.
-        visible = set(self._observed_values(status.get('state', {})))
-        visible.update(self._observed_values(status.get('descriptions', {})))
+        # Process only action signatures from new history entries. World state
+        # and descriptions represent knowledge, not a new salience event.
+        visible = set()
         history = status.get('history', [])
-        if history:
-            visible.update(self._observed_values(history[-1]))
+        new_history = history[self._processed_history_length:]
+        for turn in new_history:
+            visible.update(self._action_entities(turn))
+        self._processed_history_length = len(history)
 
         for entity in visible:
             self.salience.setdefault(entity, 0.0)
@@ -225,6 +181,25 @@ class SalienceAgent(tt.Client):
             or 'you' in description.lower()
         )
 
+    def _is_harmful_player_action(self, choice):
+        """Exclude harmful actions whose target is the player."""
+        description = choice.get('description', '').lower()
+        harmful_terms = (
+            'attack',
+            'imprison',
+            'perish',
+            'fall terribly ill',
+            'curse',
+        )
+        return (
+            any(term in description for term in harmful_terms)
+            and (
+                'yourself' in description
+                or 'you' in description
+                or 'the player' in description
+            )
+        )
+
     def on_connect(self, connect):
         """
         Optional: Runs when the client connects to the server.
@@ -248,6 +223,7 @@ class SalienceAgent(tt.Client):
         self.gm_turns_since_pass = 0
         self.next_forced_pass = random.randint(0, 3)
         self.stopped = False
+        self._processed_history_length = 0
         print(f"{self} has started its session as the {role} in world \"{world['name']}\".")
     
     def on_update(self, status):
@@ -262,12 +238,15 @@ class SalienceAgent(tt.Client):
         Required: Runs each time the world updates and it is the client's turn.
         """
         original_choices = status['choices']
-        self._update_salience(original_choices, status)
+        self._update_salience(status)
         rejected_actions = self._rejected_actions(status.get('history', []))
         choices_with_indices = [
             (index, choice)
             for index, choice in enumerate(original_choices)
-            if self._action_identity(choice) not in rejected_actions
+            if (
+                self._action_identity(choice) not in rejected_actions
+                and not self._is_harmful_player_action(choice)
+            )
         ]
 
         if self.role == 'PLAYER':
@@ -283,6 +262,27 @@ class SalienceAgent(tt.Client):
                     and self._involves_player(choice)
                 )
                 ]
+
+        # A history filter can remove every candidate, for example when a
+        # previously rejected proposal is the only available action. Preserve
+        # a valid protocol choice instead of attempting to score an empty list.
+        if not choices_with_indices:
+            choices_with_indices = list(enumerate(original_choices))
+            if self.role == 'PLAYER':
+                choices_with_indices = [
+                    (index, choice) for index, choice in choices_with_indices
+                    if choice.get('type') != 'FAIL'
+                ]
+            elif self.role == 'GAME_MASTER':
+                choices_with_indices = [
+                    (index, choice) for index, choice in choices_with_indices
+                    if not (
+                        choice.get('type') == 'FAIL'
+                        and self._involves_player(choice)
+                    )
+                ]
+            if not choices_with_indices:
+                choices_with_indices = list(enumerate(original_choices))
 
         choice_indices = [index for index, choice in choices_with_indices]
         choices = [choice for index, choice in choices_with_indices]
