@@ -53,7 +53,7 @@ services:
       - play_partner=${name-}
     # Allow the container to accept incoming network connections on these ports.
     ports:
-      - "8080:80"   # HTTP
+      - "80:80"   # HTTP
       - "443:443"  # HTTPS
       - "9005:9005" # Tandem Tales
       - "9006:9006" # Tandem Tales (WebSockets)
